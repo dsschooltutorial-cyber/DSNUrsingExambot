@@ -1,15 +1,16 @@
 import os
+import asyncio
 from flask import Flask, request
-from threading import Thread
 from telegram import Update
 from telegram.ext import Application, CommandHandler
 
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 app = Flask(__name__)
 
-telegram_app = Application.builder().token(TOKEN).updater(None).build()
+telegram_app = Application.builder().token(TOKEN).build()
 
 
 async def start(update: Update, context):
@@ -17,11 +18,11 @@ async def start(update: Update, context):
         "👋 እንኳን ወደ DS NURSING EXAM በደህና መጡ!\n\n"
         "📚 Nursing Licensure & COC Exam Preparation\n\n"
         "💰 Membership: 50 ETB / 30 Days\n\n"
-        "💎 /membership\n"
-        "💳 /payment\n"
-        "👤 /myaccount\n"
-        "🔄 /renew\n"
-        "🆘 /help"
+        "💎 /membership - Membership\n"
+        "💳 /payment - Payment\n"
+        "👤 /myaccount - My Account\n"
+        "🔄 /renew - Renew Membership\n"
+        "🆘 /help - Help"
     )
 
 
@@ -83,29 +84,27 @@ def home():
 
 
 @app.route("/webhook", methods=["POST"])
-async def webhook():
+def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
+
+    asyncio.run(telegram_app.process_update(update))
+
     return "OK"
-
-
-def run():
-    app.run(host="0.0.0.0", port=PORT)
 
 
 async def setup():
     await telegram_app.initialize()
+
     await telegram_app.bot.set_webhook(
-    url=os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
-)
+        url=RENDER_URL + "/webhook"
+    )
+
 
 if __name__ == "__main__":
-    import asyncio
-
     asyncio.run(setup())
-    Thread(target=run).start()
 
-    import time
-    while True:
-        time.sleep(60)
+    app.run(
+        host="0.0.0.0",
+        port=PORT
+    )
