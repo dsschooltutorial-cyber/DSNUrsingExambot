@@ -97,8 +97,7 @@ def run():
 async def setup():
     await telegram_app.initialize()
     await telegram_app.bot.set_webhook(
-        url=os.getenv("WEBHOOK_URL") + "/webhook"
-    )
+        url=os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
 
 
 if __name__ == "__main__":
