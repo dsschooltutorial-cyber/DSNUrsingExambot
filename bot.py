@@ -42,8 +42,8 @@ async def payment(update: Update, context):
     await update.message.reply_text(
         "💳 PAYMENT INFORMATION\n\n"
         "💰 Membership: 50 ETB / 30 Days\n\n"
-        "📱 Telebirr: YOUR NUMBER\n"
-        "🏦 CBE Birr: YOUR NUMBER\n\n"
+        "📱 Telebirr: +251931745423\n"
+        "🏦 CBE Birr: 1000173352925\n\n"
         "ክፍያ ከፈጸሙ በኋላ Transaction ID ያስቀምጡ።"
     )
 
