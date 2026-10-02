@@ -15,17 +15,14 @@ telegram_app = Application.builder().token(TOKEN).build()
 
 async def start(update: Update, context):
     await update.message.reply_text(
-        👋 እንኳን ወደ DS NURSING EXAM በደህና መጡ!
-
-📚 Nursing Exit Exam • COC • Licensure Exam Preparation
-
-💰 Membership: 50 ETB / 30 Days
-
-💎 /membership — Membership
-💳 /payment — Payment
-👤 /myaccount — My Account
-🔄 /renew — Renew Membership
-🆘 /help — Help
+        "👋 እንኳን ወደ DS NURSING EXAM በደህና መጡ!\n\n"
+        "📚 Nursing Exit Exam • COC • Licensure Exam Preparation\n\n"
+        "💰 Membership: 50 ETB / 30 Days\n\n"
+        "💎 /membership — Membership\n"
+        "💳 /payment — Payment\n"
+        "👤 /myaccount — My Account\n"
+        "🔄 /renew — Renew Membership\n"
+        "🆘 /help — Help"
     )
 
 
