@@ -19,6 +19,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 ADMIN_ID = 798816989
 INVITE_LINK = os.getenv("INVITE_LINK")
+CHANNEL_ID = -1003758223501
 
 awaiting_transaction = {}
 
