@@ -1,4 +1,6 @@
 import os
+from datetime import datetime, timedelta, timezone
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -17,6 +19,9 @@ ADMIN_ID = 798816989
 INVITE_LINK = os.getenv("INVITE_LINK")
 
 awaiting_transaction = {}
+
+# Membership information
+memberships = {}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,7 +110,6 @@ async def receive_transaction(
         ]
     ]
 
-    # Send notification to admin
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
@@ -119,7 +123,6 @@ async def receive_transaction(
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-    # Confirm to student
     await update.message.reply_text(
         "✅ Your payment information has been sent to Admin.\n\n"
         "⏳ Please wait for payment verification."
@@ -152,6 +155,17 @@ async def admin_decision(
             )
             return
 
+        # Membership starts when Admin approves payment
+        start_date = datetime.now(timezone.utc)
+        expiry_date = start_date + timedelta(days=30)
+
+        memberships[user_id] = {
+            "start": start_date,
+            "expiry": expiry_date,
+        }
+
+        expiry_text = expiry_date.strftime("%d %B %Y")
+
         await context.bot.send_message(
             chat_id=user_id,
             text=(
@@ -159,14 +173,17 @@ async def admin_decision(
                 "Welcome to DS NURSING EXAM. 🎓\n\n"
                 "🔐 PRIVATE CHANNEL LINK:\n"
                 f"{INVITE_LINK}\n\n"
-                "💰 Membership: 50 ETB / 30 Days"
+                "💰 Membership: 50 ETB / 30 Days\n"
+                f"📅 Expires: {expiry_text}\n\n"
+                "Use /myaccount to check your membership."
             ),
         )
 
         await query.message.edit_reply_markup(reply_markup=None)
 
         await query.message.reply_text(
-            f"✅ Payment approved for User ID: {user_id}"
+            f"✅ Payment approved for User ID: {user_id}\n"
+            f"📅 Expires: {expiry_text}"
         )
 
     elif action == "reject":
@@ -188,9 +205,40 @@ async def admin_decision(
 
 
 async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    membership_data = memberships.get(user_id)
+
+    if not membership_data:
+        await update.message.reply_text(
+            "👤 MY ACCOUNT\n\n"
+            "🔴 Membership: INACTIVE\n\n"
+            "💰 Membership: 50 ETB / 30 Days\n"
+            "👉 Use /payment to subscribe."
+        )
+        return
+
+    now = datetime.now(timezone.utc)
+    expiry_date = membership_data["expiry"]
+
+    if now >= expiry_date:
+        await update.message.reply_text(
+            "👤 MY ACCOUNT\n\n"
+            "🔴 Membership: EXPIRED\n\n"
+            "💰 Renewal: 50 ETB / 30 Days\n"
+            "👉 Use /renew to renew your membership."
+        )
+        return
+
+    days_left = (expiry_date - now).days
+    expiry_text = expiry_date.strftime("%d %B %Y")
+
     await update.message.reply_text(
         "👤 MY ACCOUNT\n\n"
-        "የMembership ሁኔታዎን ለማረጋገጥ Admin ን ያነጋግሩ።"
+        "🟢 Membership: ACTIVE\n"
+        f"📅 Expires: {expiry_text}\n"
+        f"⏳ Days remaining: {days_left} days\n\n"
+        "💰 50 ETB / 30 Days"
     )
 
 
@@ -205,7 +253,7 @@ async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🆘 HELP\n\n"
-        "ለእርዳታ Admin ን ያነጋግሩ።"
+        "For assistance, contact @DSNursing."
     )
 
 
@@ -242,12 +290,13 @@ def main():
     )
 
     application.run_webhook(
-    listen="0.0.0.0",
-    port=PORT,
-    url_path="webhook",
-    webhook_url=RENDER_URL + "/webhook",
-    drop_pending_updates=True,
-)
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="webhook",
+        webhook_url=RENDER_URL + "/webhook",
+        drop_pending_updates=True,
+    )
+
 
 if __name__ == "__main__":
     main()
