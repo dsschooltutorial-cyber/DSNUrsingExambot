@@ -1,7 +1,9 @@
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 
 import psycopg
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -12,9 +14,12 @@ from telegram.ext import (
     filters,
 )
 
+# =========================
+# SETTINGS
+# =========================
+
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 ADMIN_ID = 798816989
@@ -22,6 +27,14 @@ INVITE_LINK = os.getenv("INVITE_LINK")
 CHANNEL_ID = -1003758223501
 
 awaiting_transaction = {}
+
+# Flask app for Render health/port check
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+    return "DS Nursing Exam Bot is running."
 
 
 # =========================
@@ -107,11 +120,13 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
 
         for user_id in expired_users:
             try:
+                # Remove from private channel
                 await context.bot.ban_chat_member(
                     chat_id=CHANNEL_ID,
                     user_id=user_id,
                 )
 
+                # Allow future rejoining after renewal
                 await context.bot.unban_chat_member(
                     chat_id=CHANNEL_ID,
                     user_id=user_id,
@@ -120,6 +135,7 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
 
                 print(f"Removed expired member: {user_id}")
 
+                # Notify user
                 try:
                     await context.bot.send_message(
                         chat_id=user_id,
@@ -137,7 +153,8 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
 
             except Exception as e:
                 print(
-                    f"Could not remove expired user {user_id}: {e}"
+                    f"Could not remove expired user "
+                    f"{user_id}: {e}"
                 )
 
     except Exception as e:
@@ -469,6 +486,18 @@ async def help_command(
 
 
 # =========================
+# RUN FLASK SERVER
+# =========================
+
+def run_flask():
+    app.run(
+        host="0.0.0.0",
+        port=PORT,
+        use_reloader=False,
+    )
+
+
+# =========================
 # MAIN
 # =========================
 
@@ -476,12 +505,21 @@ def main():
 
     init_database()
 
+    # Start Flask server for Render
+    flask_thread = threading.Thread(
+        target=run_flask,
+        daemon=True,
+    )
+
+    flask_thread.start()
+
     application = (
         Application.builder()
         .token(TOKEN)
         .build()
     )
 
+    # Commands
     application.add_handler(
         CommandHandler("start", start)
     )
@@ -506,6 +544,7 @@ def main():
         CommandHandler("help", help_command)
     )
 
+    # Payment button
     application.add_handler(
         CallbackQueryHandler(
             paid_callback,
@@ -513,6 +552,7 @@ def main():
         )
     )
 
+    # Admin buttons
     application.add_handler(
         CallbackQueryHandler(
             admin_decision,
@@ -520,6 +560,7 @@ def main():
         )
     )
 
+    # Transaction ID
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -534,12 +575,13 @@ def main():
         first=30,
     )
 
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path="webhook",
-        webhook_url=RENDER_URL + "/webhook",
-        drop_pending_updates=True,
+    print("DS Nursing Exam Bot starting...")
+    print("Automatic membership expiry checker enabled.")
+    print(f"Health server running on port {PORT}.")
+
+    # Start Telegram bot
+    application.run_polling(
+        drop_pending_updates=True
     )
 
 
