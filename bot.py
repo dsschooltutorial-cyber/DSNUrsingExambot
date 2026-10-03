@@ -222,8 +222,21 @@ async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        start_date = datetime.now(timezone.utc)
-        expiry_date = start_date + timedelta(days=30)
+        membership_data = get_membership(user_id)
+
+if membership_data:
+    old_start, old_expiry = membership_data
+    now = datetime.now(timezone.utc)
+
+    if now < old_expiry:
+        start_date = old_start
+        expiry_date = old_expiry + timedelta(days=30)
+    else:
+        start_date = now
+        expiry_date = now + timedelta(days=30)
+else:
+    start_date = datetime.now(timezone.utc)
+    expiry_date = start_date + timedelta(days=30)
 
         # Save permanently in PostgreSQL
         save_membership(
