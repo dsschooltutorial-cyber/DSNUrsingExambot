@@ -11,18 +11,78 @@ from telegram.ext import (
     filters,
 )
 
+import psycopg
+
+
 TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 ADMIN_ID = 798816989
 INVITE_LINK = os.getenv("INVITE_LINK")
 
 awaiting_transaction = {}
 
-# Membership information
-memberships = {}
 
+# =========================
+# DATABASE
+# =========================
+
+def get_db():
+    return psycopg.connect(DATABASE_URL)
+
+
+def init_database():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memberships (
+                    user_id BIGINT PRIMARY KEY,
+                    start_date TIMESTAMPTZ NOT NULL,
+                    expiry_date TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+        conn.commit()
+
+
+def save_membership(user_id, start_date, expiry_date):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO memberships
+                (user_id, start_date, expiry_date)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    start_date = EXCLUDED.start_date,
+                    expiry_date = EXCLUDED.expiry_date
+                """,
+                (user_id, start_date, expiry_date),
+            )
+        conn.commit()
+
+
+def get_membership(user_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT start_date, expiry_date
+                FROM memberships
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            return cur.fetchone()
+
+
+# =========================
+# START
+# =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -37,6 +97,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# =========================
+# MEMBERSHIP
+# =========================
+
 async def membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💎 DS NURSING EXAM MEMBERSHIP\n\n"
@@ -49,7 +113,12 @@ async def membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# =========================
+# PAYMENT
+# =========================
+
 async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     keyboard = [
         [InlineKeyboardButton("✅ I HAVE PAID", callback_data="paid")]
     ]
@@ -69,10 +138,12 @@ async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
     user_id = query.from_user.id
+
     awaiting_transaction[user_id] = True
 
     await query.message.reply_text(
@@ -81,19 +152,26 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# =========================
+# RECEIVE TRANSACTION
+# =========================
+
 async def receive_transaction(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     user_id = update.effective_user.id
 
     if not awaiting_transaction.get(user_id):
         return
 
     transaction_id = update.message.text.strip()
+
     awaiting_transaction.pop(user_id, None)
 
     user = update.effective_user
+
     name = user.full_name
     username = user.username or "No username"
 
@@ -129,42 +207,61 @@ async def receive_transaction(
     )
 
 
+# =========================
+# ADMIN APPROVE / REJECT
+# =========================
+
 async def admin_decision(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     query = update.callback_query
 
     if query.from_user.id != ADMIN_ID:
+
         await query.answer(
             "❌ You are not authorized.",
             show_alert=True,
         )
+
         return
 
     await query.answer()
 
     action, user_id_text = query.data.split(":")
+
     user_id = int(user_id_text)
+
+    # =========================
+    # APPROVE
+    # =========================
 
     if action == "approve":
 
         if not INVITE_LINK:
+
             await query.message.reply_text(
                 "⚠️ INVITE_LINK is not configured."
             )
+
             return
 
-        # Membership starts when Admin approves payment
+        # Membership starts when payment is approved
         start_date = datetime.now(timezone.utc)
+
         expiry_date = start_date + timedelta(days=30)
 
-        memberships[user_id] = {
-            "start": start_date,
-            "expiry": expiry_date,
-        }
+        # Save permanently in PostgreSQL
+        save_membership(
+            user_id,
+            start_date,
+            expiry_date,
+        )
 
-        expiry_text = expiry_date.strftime("%d %B %Y")
+        expiry_text = expiry_date.strftime(
+            "%d %B %Y"
+        )
 
         await context.bot.send_message(
             chat_id=user_id,
@@ -179,12 +276,18 @@ async def admin_decision(
             ),
         )
 
-        await query.message.edit_reply_markup(reply_markup=None)
+        await query.message.edit_reply_markup(
+            reply_markup=None
+        )
 
         await query.message.reply_text(
             f"✅ Payment approved for User ID: {user_id}\n"
             f"📅 Expires: {expiry_text}"
         )
+
+    # =========================
+    # REJECT
+    # =========================
 
     elif action == "reject":
 
@@ -197,41 +300,67 @@ async def admin_decision(
             ),
         )
 
-        await query.message.edit_reply_markup(reply_markup=None)
+        await query.message.edit_reply_markup(
+            reply_markup=None
+        )
 
         await query.message.reply_text(
             f"❌ Payment rejected for User ID: {user_id}"
         )
 
 
-async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# MY ACCOUNT
+# =========================
+
+async def myaccount(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user_id = update.effective_user.id
 
-    membership_data = memberships.get(user_id)
+    membership_data = get_membership(user_id)
 
     if not membership_data:
+
         await update.message.reply_text(
             "👤 MY ACCOUNT\n\n"
             "🔴 Membership: INACTIVE\n\n"
             "💰 Membership: 50 ETB / 30 Days\n"
             "👉 Use /payment to subscribe."
         )
+
         return
 
+    start_date, expiry_date = membership_data
+
     now = datetime.now(timezone.utc)
-    expiry_date = membership_data["expiry"]
+
+    # =========================
+    # EXPIRED
+    # =========================
 
     if now >= expiry_date:
+
         await update.message.reply_text(
             "👤 MY ACCOUNT\n\n"
             "🔴 Membership: EXPIRED\n\n"
             "💰 Renewal: 50 ETB / 30 Days\n"
             "👉 Use /renew to renew your membership."
         )
+
         return
 
+    # =========================
+    # ACTIVE
+    # =========================
+
     days_left = (expiry_date - now).days
-    expiry_text = expiry_date.strftime("%d %B %Y")
+
+    expiry_text = expiry_date.strftime(
+        "%d %B %Y"
+    )
 
     await update.message.reply_text(
         "👤 MY ACCOUNT\n\n"
@@ -242,7 +371,15 @@ async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# RENEW
+# =========================
+
+async def renew(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     await update.message.reply_text(
         "🔄 RENEW MEMBERSHIP\n\n"
         "💰 50 ETB / 30 Days\n\n"
@@ -250,23 +387,59 @@ async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# HELP
+# =========================
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     await update.message.reply_text(
         "🆘 HELP\n\n"
         "For assistance, contact @DSNursing."
     )
 
 
+# =========================
+# MAIN
+# =========================
+
 def main():
 
-    application = Application.builder().token(TOKEN).build()
+    # Create database table
+    init_database()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("membership", membership))
-    application.add_handler(CommandHandler("payment", payment))
-    application.add_handler(CommandHandler("myaccount", myaccount))
-    application.add_handler(CommandHandler("renew", renew))
-    application.add_handler(CommandHandler("help", help_command))
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .build()
+    )
+
+    application.add_handler(
+        CommandHandler("start", start)
+    )
+
+    application.add_handler(
+        CommandHandler("membership", membership)
+    )
+
+    application.add_handler(
+        CommandHandler("payment", payment)
+    )
+
+    application.add_handler(
+        CommandHandler("myaccount", myaccount)
+    )
+
+    application.add_handler(
+        CommandHandler("renew", renew)
+    )
+
+    application.add_handler(
+        CommandHandler("help", help_command)
+    )
 
     application.add_handler(
         CallbackQueryHandler(
