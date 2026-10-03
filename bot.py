@@ -100,15 +100,18 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
 
                 expired_users = [row[0] for row in cur.fetchall()]
 
+        print(
+            f"Expiry checker ran successfully. "
+            f"Expired users found: {len(expired_users)}"
+        )
+
         for user_id in expired_users:
             try:
-                # Remove the expired member from the private channel
                 await context.bot.ban_chat_member(
                     chat_id=CHANNEL_ID,
                     user_id=user_id,
                 )
 
-                # Allow the user to join again after renewal
                 await context.bot.unban_chat_member(
                     chat_id=CHANNEL_ID,
                     user_id=user_id,
@@ -117,7 +120,6 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
 
                 print(f"Removed expired member: {user_id}")
 
-                # Notify the user
                 try:
                     await context.bot.send_message(
                         chat_id=user_id,
@@ -129,7 +131,9 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
                         ),
                     )
                 except Exception as e:
-                    print(f"Could not notify user {user_id}: {e}")
+                    print(
+                        f"Could not notify user {user_id}: {e}"
+                    )
 
             except Exception as e:
                 print(
@@ -523,7 +527,7 @@ def main():
         )
     )
 
-    # Check expired memberships every 5 minutes
+    # Automatic expiry check every 5 minutes
     application.job_queue.run_repeating(
         remove_expired_members,
         interval=300,
