@@ -1,6 +1,4 @@
 import os
-import asyncio
-from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -18,11 +16,6 @@ RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 ADMIN_ID = 798816989
 INVITE_LINK = os.getenv("INVITE_LINK")
 
-app = Flask(__name__)
-
-telegram_app = Application.builder().token(TOKEN).build()
-
-# Temporary payment waiting list
 awaiting_transaction = {}
 
 
@@ -31,11 +24,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 እንኳን ወደ DS NURSING EXAM በደህና መጡ!\n\n"
         "📚 Nursing Exit Exam • COC • Licensure Exam Preparation\n\n"
         "💰 Membership: 50 ETB / 30 Days\n\n"
-        "💎 /membership — Membership\n"
-        "💳 /payment — Payment\n"
-        "👤 /myaccount — My Account\n"
-        "🔄 /renew — Renew Membership\n"
-        "🆘 /help — Help"
+        "/membership — Membership\n"
+        "/payment — Payment\n"
+        "/myaccount — My Account\n"
+        "/renew — Renew Membership\n"
+        "/help — Help"
     )
 
 
@@ -62,12 +55,11 @@ async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📱 Telebirr: +251931745423\n"
         "🏦 CBE Birr: 1000173352925\n\n"
         "1️⃣ Make your payment.\n"
-        "2️⃣ Click **I HAVE PAID**.\n"
+        "2️⃣ Click I HAVE PAID.\n"
         "3️⃣ Send your Transaction ID.\n"
         "4️⃣ Admin will verify your payment.\n"
         "5️⃣ After approval, you will receive the private channel link.",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
     )
 
 
@@ -76,18 +68,17 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     user_id = query.from_user.id
-
     awaiting_transaction[user_id] = True
 
     await query.message.reply_text(
-        "🧾 **SEND YOUR TRANSACTION ID**\n\n"
-        "Please send the Transaction ID you received after payment.",
-        parse_mode="Markdown",
+        "🧾 SEND YOUR TRANSACTION ID\n\n"
+        "Please send the Transaction ID you received after payment."
     )
 
 
 async def receive_transaction(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
 ):
     user_id = update.effective_user.id
 
@@ -114,10 +105,11 @@ async def receive_transaction(
         ]
     ]
 
+    # Send notification to admin
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
-            "💳 **NEW PAYMENT REQUEST**\n\n"
+            "💳 NEW PAYMENT REQUEST\n\n"
             f"👤 Name: {name}\n"
             f"🔗 Username: @{username}\n"
             f"🆔 User ID: {user_id}\n"
@@ -125,9 +117,9 @@ async def receive_transaction(
             "Please verify the payment."
         ),
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
     )
 
+    # Confirm to student
     await update.message.reply_text(
         "✅ Your payment information has been sent to Admin.\n\n"
         "⏳ Please wait for payment verification."
@@ -135,18 +127,19 @@ async def receive_transaction(
 
 
 async def admin_decision(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.callback_query
-    await query.answer()
 
-    # Only the admin can approve/reject
     if query.from_user.id != ADMIN_ID:
         await query.answer(
             "❌ You are not authorized.",
             show_alert=True,
         )
         return
+
+    await query.answer()
 
     action, user_id_text = query.data.split(":")
     user_id = int(user_id_text)
@@ -155,20 +148,19 @@ async def admin_decision(
 
         if not INVITE_LINK:
             await query.message.reply_text(
-                "⚠️ INVITE_LINK is not configured in Render."
+                "⚠️ INVITE_LINK is not configured."
             )
             return
 
         await context.bot.send_message(
             chat_id=user_id,
             text=(
-                "🎉 **PAYMENT APPROVED!**\n\n"
+                "🎉 PAYMENT APPROVED!\n\n"
                 "Welcome to DS NURSING EXAM. 🎓\n\n"
-                "🔐 **PRIVATE CHANNEL LINK:**\n"
+                "🔐 PRIVATE CHANNEL LINK:\n"
                 f"{INVITE_LINK}\n\n"
                 "💰 Membership: 50 ETB / 30 Days"
             ),
-            parse_mode="Markdown",
         )
 
         await query.message.edit_reply_markup(reply_markup=None)
@@ -182,11 +174,10 @@ async def admin_decision(
         await context.bot.send_message(
             chat_id=user_id,
             text=(
-                "❌ **PAYMENT NOT VERIFIED**\n\n"
+                "❌ PAYMENT NOT VERIFIED\n\n"
                 "Your payment could not be verified.\n"
                 "Please contact @DSNursing for assistance."
             ),
-            parse_mode="Markdown",
         )
 
         await query.message.edit_reply_markup(reply_markup=None)
@@ -218,64 +209,45 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# Commands
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("membership", membership))
-telegram_app.add_handler(CommandHandler("payment", payment))
-telegram_app.add_handler(CommandHandler("myaccount", myaccount))
-telegram_app.add_handler(CommandHandler("renew", renew))
-telegram_app.add_handler(CommandHandler("help", help_command))
+def main():
 
-# Buttons
-telegram_app.add_handler(
-    CallbackQueryHandler(paid_callback, pattern="^paid$")
-)
+    application = Application.builder().token(TOKEN).build()
 
-telegram_app.add_handler(
-    CallbackQueryHandler(
-        admin_decision,
-        pattern="^(approve|reject):",
-    )
-)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("membership", membership))
+    application.add_handler(CommandHandler("payment", payment))
+    application.add_handler(CommandHandler("myaccount", myaccount))
+    application.add_handler(CommandHandler("renew", renew))
+    application.add_handler(CommandHandler("help", help_command))
 
-# Transaction ID messages
-telegram_app.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        receive_transaction,
-    )
-)
-
-
-@app.route("/", methods=["GET"])
-def home():
-    return "DS Nursing Exam Bot is running!"
-
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, telegram_app.bot)
-
-    asyncio.run(
-        telegram_app.process_update(update)
+    application.add_handler(
+        CallbackQueryHandler(
+            paid_callback,
+            pattern="^paid$"
+        )
     )
 
-    return "OK"
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_decision,
+            pattern="^(approve|reject):"
+        )
+    )
 
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            receive_transaction
+        )
+    )
 
-async def setup():
-    await telegram_app.initialize()
-
-    await telegram_app.bot.set_webhook(
-        url=RENDER_URL + "/webhook"
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=RENDER_URL + "/webhook",
+        drop_pending_updates=True,
     )
 
 
 if __name__ == "__main__":
-    asyncio.run(setup())
-
-    app.run(
-        host="0.0.0.0",
-        port=PORT,
-    )
+    main()
