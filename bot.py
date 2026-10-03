@@ -28,7 +28,6 @@ CHANNEL_ID = -1003758223501
 
 awaiting_transaction = {}
 
-# Flask app for Render health/port check
 app = Flask(__name__)
 
 
@@ -53,10 +52,21 @@ def init_database():
                 CREATE TABLE IF NOT EXISTS memberships (
                     user_id BIGINT PRIMARY KEY,
                     start_date TIMESTAMPTZ NOT NULL,
-                    expiry_date TIMESTAMPTZ NOT NULL
+                    expiry_date TIMESTAMPTZ NOT NULL,
+                    expired_notified BOOLEAN NOT NULL DEFAULT FALSE
                 )
                 """
             )
+
+            # Add column if old database already exists
+            cur.execute(
+                """
+                ALTER TABLE memberships
+                ADD COLUMN IF NOT EXISTS expired_notified
+                BOOLEAN NOT NULL DEFAULT FALSE
+                """
+            )
+
         conn.commit()
 
 
@@ -66,12 +76,13 @@ def save_membership(user_id, start_date, expiry_date):
             cur.execute(
                 """
                 INSERT INTO memberships
-                (user_id, start_date, expiry_date)
-                VALUES (%s, %s, %s)
+                (user_id, start_date, expiry_date, expired_notified)
+                VALUES (%s, %s, %s, FALSE)
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     start_date = EXCLUDED.start_date,
-                    expiry_date = EXCLUDED.expiry_date
+                    expiry_date = EXCLUDED.expiry_date,
+                    expired_notified = FALSE
                 """,
                 (user_id, start_date, expiry_date),
             )
@@ -83,7 +94,7 @@ def get_membership(user_id):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT start_date, expiry_date
+                SELECT start_date, expiry_date, expired_notified
                 FROM memberships
                 WHERE user_id = %s
                 """,
@@ -97,16 +108,19 @@ def get_membership(user_id):
 # =========================
 
 async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
+
     now = datetime.now(timezone.utc)
 
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     SELECT user_id
                     FROM memberships
                     WHERE expiry_date <= %s
+                    AND expired_notified = FALSE
                     """,
                     (now,),
                 )
@@ -119,46 +133,106 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
         )
 
         for user_id in expired_users:
+
+            removed = False
+
+            # -------------------------
+            # Remove from private channel
+            # -------------------------
+
             try:
-                # Remove from private channel
+
                 await context.bot.ban_chat_member(
                     chat_id=CHANNEL_ID,
                     user_id=user_id,
                 )
 
-                # Allow future rejoining after renewal
                 await context.bot.unban_chat_member(
                     chat_id=CHANNEL_ID,
                     user_id=user_id,
                     only_if_banned=True,
                 )
 
-                print(f"Removed expired member: {user_id}")
+                removed = True
 
-                # Notify user
-                try:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=(
-                            "🔴 MEMBERSHIP EXPIRED\n\n"
-                            "Your DS NURSING EXAM membership has expired.\n\n"
-                            "💰 Renewal: 50 ETB / 30 Days\n"
-                            "👉 Use /renew to renew your membership."
-                        ),
-                    )
-                except Exception as e:
-                    print(
-                        f"Could not notify user {user_id}: {e}"
-                    )
+                print(
+                    f"Removed expired member: {user_id}"
+                )
 
             except Exception as e:
+
                 print(
                     f"Could not remove expired user "
                     f"{user_id}: {e}"
                 )
 
+                # Even if user already left,
+                # continue with expiry notification.
+                removed = True
+
+            # -------------------------
+            # Notify user
+            # -------------------------
+
+            if removed:
+
+                try:
+
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            "🔴 MEMBERSHIP EXPIRED\n\n"
+                            "Your DS NURSING EXAM membership "
+                            "has expired.\n\n"
+                            "💰 Renewal: 50 ETB / 30 Days\n\n"
+                            "👉 Use /renew to renew your membership."
+                        ),
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"Could not notify user "
+                        f"{user_id}: {e}"
+                    )
+
+                # -------------------------
+                # Mark as processed
+                # -------------------------
+
+                try:
+
+                    with get_db() as conn:
+                        with conn.cursor() as cur:
+
+                            cur.execute(
+                                """
+                                UPDATE memberships
+                                SET expired_notified = TRUE
+                                WHERE user_id = %s
+                                """,
+                                (user_id,),
+                            )
+
+                        conn.commit()
+
+                    print(
+                        f"Expired membership marked as processed: "
+                        f"{user_id}"
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"Could not update expired status "
+                        f"for {user_id}: {e}"
+                    )
+
     except Exception as e:
-        print(f"Expiry checker error: {e}")
+
+        print(
+            f"Expiry checker error: {e}"
+        )
 
 
 # =========================
@@ -166,6 +240,7 @@ async def remove_expired_members(context: ContextTypes.DEFAULT_TYPE):
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not update.message:
         return
 
@@ -185,7 +260,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MEMBERSHIP
 # =========================
 
-async def membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def membership(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     if not update.message:
         return
 
@@ -204,7 +283,11 @@ async def membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # PAYMENT
 # =========================
 
-async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def payment(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     if not update.message:
         return
 
@@ -226,7 +309,8 @@ async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ Click I HAVE PAID.\n"
         "3️⃣ Send your Transaction ID.\n"
         "4️⃣ Admin will verify your payment.\n"
-        "5️⃣ After approval, you will receive the private channel link.",
+        "5️⃣ After approval, you will receive "
+        "the private channel link.",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -235,6 +319,7 @@ async def paid_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     query = update.callback_query
 
     if not query:
@@ -243,11 +328,13 @@ async def paid_callback(
     await query.answer()
 
     user_id = query.from_user.id
+
     awaiting_transaction[user_id] = True
 
     await query.message.reply_text(
         "🧾 SEND YOUR TRANSACTION ID\n\n"
-        "Please send the Transaction ID you received after payment."
+        "Please send the Transaction ID "
+        "you received after payment."
     )
 
 
@@ -259,7 +346,11 @@ async def receive_transaction(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if not update.message or not update.effective_user:
+
+    if not update.message:
+        return
+
+    if not update.effective_user:
         return
 
     user_id = update.effective_user.id
@@ -268,9 +359,11 @@ async def receive_transaction(
         return
 
     transaction_id = update.message.text.strip()
+
     awaiting_transaction.pop(user_id, None)
 
     user = update.effective_user
+
     name = user.full_name
     username = user.username or "No username"
 
@@ -314,47 +407,76 @@ async def admin_decision(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     query = update.callback_query
 
     if not query:
         return
 
     if query.from_user.id != ADMIN_ID:
+
         await query.answer(
             "❌ You are not authorized.",
             show_alert=True,
         )
+
         return
 
     await query.answer()
 
     action, user_id_text = query.data.split(":")
+
     user_id = int(user_id_text)
+
+    # =====================
+    # APPROVE
+    # =====================
 
     if action == "approve":
 
         if not INVITE_LINK:
+
             await query.message.reply_text(
                 "⚠️ INVITE_LINK is not configured."
             )
+
             return
 
         now = datetime.now(timezone.utc)
+
         membership_data = get_membership(user_id)
 
         if membership_data:
-            old_start, old_expiry = membership_data
+
+            old_start = membership_data[0]
+            old_expiry = membership_data[1]
 
             if now < old_expiry:
+
                 start_date = old_start
-                expiry_date = old_expiry + timedelta(days=30)
+
+                expiry_date = (
+                    old_expiry +
+                    timedelta(days=30)
+                )
+
             else:
+
                 start_date = now
-                expiry_date = now + timedelta(days=30)
+
+                expiry_date = (
+                    now +
+                    timedelta(days=30)
+                )
 
         else:
+
             start_date = now
-            expiry_date = now + timedelta(days=30)
+
+            expiry_date = (
+                now +
+                timedelta(days=30)
+            )
 
         save_membership(
             user_id,
@@ -362,7 +484,9 @@ async def admin_decision(
             expiry_date,
         )
 
-        expiry_text = expiry_date.strftime("%d %B %Y")
+        expiry_text = expiry_date.strftime(
+            "%d %B %Y"
+        )
 
         await context.bot.send_message(
             chat_id=user_id,
@@ -385,6 +509,10 @@ async def admin_decision(
             f"✅ Payment approved for User ID: {user_id}\n"
             f"📅 Expires: {expiry_text}"
         )
+
+    # =====================
+    # REJECT
+    # =====================
 
     elif action == "reject":
 
@@ -414,35 +542,51 @@ async def myaccount(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if not update.message or not update.effective_user:
+
+    if not update.message:
+        return
+
+    if not update.effective_user:
         return
 
     user_id = update.effective_user.id
+
     membership_data = get_membership(user_id)
 
     if not membership_data:
+
         await update.message.reply_text(
             "👤 MY ACCOUNT\n\n"
             "🔴 Membership: INACTIVE\n\n"
             "💰 Membership: 50 ETB / 30 Days\n"
             "👉 Use /payment to subscribe."
         )
+
         return
 
-    start_date, expiry_date = membership_data
+    start_date = membership_data[0]
+    expiry_date = membership_data[1]
+
     now = datetime.now(timezone.utc)
 
     if now >= expiry_date:
+
         await update.message.reply_text(
             "👤 MY ACCOUNT\n\n"
             "🔴 Membership: EXPIRED\n\n"
             "💰 Renewal: 50 ETB / 30 Days\n"
             "👉 Use /renew to renew your membership."
         )
+
         return
 
-    days_left = (expiry_date - now).days
-    expiry_text = expiry_date.strftime("%d %B %Y")
+    days_left = (
+        expiry_date - now
+    ).days
+
+    expiry_text = expiry_date.strftime(
+        "%d %B %Y"
+    )
 
     await update.message.reply_text(
         "👤 MY ACCOUNT\n\n"
@@ -457,7 +601,11 @@ async def myaccount(
 # RENEW
 # =========================
 
-async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def renew(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     if not update.message:
         return
 
@@ -476,6 +624,7 @@ async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not update.message:
         return
 
@@ -486,10 +635,11 @@ async def help_command(
 
 
 # =========================
-# RUN FLASK SERVER
+# FLASK SERVER
 # =========================
 
 def run_flask():
+
     app.run(
         host="0.0.0.0",
         port=PORT,
@@ -503,9 +653,10 @@ def run_flask():
 
 def main():
 
+    # Database
     init_database()
 
-    # Start Flask server for Render
+    # Start Flask health server
     flask_thread = threading.Thread(
         target=run_flask,
         daemon=True,
@@ -513,38 +664,63 @@ def main():
 
     flask_thread.start()
 
+    # Telegram application
     application = (
         Application.builder()
         .token(TOKEN)
         .build()
     )
 
-    # Commands
+    # =====================
+    # COMMANDS
+    # =====================
+
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     application.add_handler(
-        CommandHandler("membership", membership)
+        CommandHandler(
+            "membership",
+            membership
+        )
     )
 
     application.add_handler(
-        CommandHandler("payment", payment)
+        CommandHandler(
+            "payment",
+            payment
+        )
     )
 
     application.add_handler(
-        CommandHandler("myaccount", myaccount)
+        CommandHandler(
+            "myaccount",
+            myaccount
+        )
     )
 
     application.add_handler(
-        CommandHandler("renew", renew)
+        CommandHandler(
+            "renew",
+            renew
+        )
     )
 
     application.add_handler(
-        CommandHandler("help", help_command)
+        CommandHandler(
+            "help",
+            help_command
+        )
     )
 
-    # Payment button
+    # =====================
+    # PAYMENT BUTTON
+    # =====================
+
     application.add_handler(
         CallbackQueryHandler(
             paid_callback,
@@ -552,7 +728,10 @@ def main():
         )
     )
 
-    # Admin buttons
+    # =====================
+    # ADMIN BUTTONS
+    # =====================
+
     application.add_handler(
         CallbackQueryHandler(
             admin_decision,
@@ -560,7 +739,10 @@ def main():
         )
     )
 
-    # Transaction ID
+    # =====================
+    # TRANSACTION ID
+    # =====================
+
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -568,22 +750,40 @@ def main():
         )
     )
 
-    # Automatic expiry check every 5 minutes
+    # =====================
+    # EXPIRY CHECKER
+    # =====================
+
     application.job_queue.run_repeating(
         remove_expired_members,
         interval=300,
         first=30,
     )
 
-    print("DS Nursing Exam Bot starting...")
-    print("Automatic membership expiry checker enabled.")
-    print(f"Health server running on port {PORT}.")
+    print(
+        "DS Nursing Exam Bot starting..."
+    )
 
-    # Start Telegram bot
+    print(
+        "Automatic membership expiry checker enabled."
+    )
+
+    print(
+        f"Health server running on port {PORT}."
+    )
+
+    # =====================
+    # START BOT
+    # =====================
+
     application.run_polling(
         drop_pending_updates=True
     )
 
+
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
     main()
