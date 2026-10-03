@@ -23,10 +23,6 @@ INVITE_LINK = os.getenv("INVITE_LINK")
 awaiting_transaction = {}
 
 
-# =========================
-# DATABASE
-# =========================
-
 def get_db():
     return psycopg.connect(DATABASE_URL)
 
@@ -78,11 +74,10 @@ def get_membership(user_id):
             return cur.fetchone()
 
 
-# =========================
-# START
-# =========================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
     await update.message.reply_text(
         "👋 እንኳን ወደ DS NURSING EXAM በደህና መጡ!\n\n"
         "📚 Nursing Exit Exam • COC • Licensure Exam Preparation\n\n"
@@ -95,11 +90,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# MEMBERSHIP
-# =========================
-
 async def membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
     await update.message.reply_text(
         "💎 DS NURSING EXAM MEMBERSHIP\n\n"
         "💰 50 ETB / 30 Days\n\n"
@@ -111,11 +105,10 @@ async def membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# PAYMENT
-# =========================
-
 async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
     keyboard = [
         [InlineKeyboardButton("✅ I HAVE PAID", callback_data="paid")]
     ]
@@ -136,6 +129,10 @@ async def payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
+    if not query:
+        return
+
     await query.answer()
 
     user_id = query.from_user.id
@@ -147,11 +144,10 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# RECEIVE TRANSACTION
-# =========================
-
 async def receive_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.effective_user:
+        return
+
     user_id = update.effective_user.id
 
     if not awaiting_transaction.get(user_id):
@@ -194,12 +190,11 @@ async def receive_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-# =========================
-# ADMIN APPROVE / REJECT
-# =========================
-
 async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
+    if not query:
+        return
 
     if query.from_user.id != ADMIN_ID:
         await query.answer(
@@ -213,7 +208,6 @@ async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action, user_id_text = query.data.split(":")
     user_id = int(user_id_text)
 
-    # APPROVE
     if action == "approve":
 
         if not INVITE_LINK:
@@ -222,23 +216,22 @@ async def admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        now = datetime.now(timezone.utc)
         membership_data = get_membership(user_id)
 
-if membership_data:
-    old_start, old_expiry = membership_data
-    now = datetime.now(timezone.utc)
+        if membership_data:
+            old_start, old_expiry = membership_data
 
-    if now < old_expiry:
-        start_date = old_start
-        expiry_date = old_expiry + timedelta(days=30)
-    else:
-        start_date = now
-        expiry_date = now + timedelta(days=30)
-else:
-    start_date = datetime.now(timezone.utc)
-    expiry_date = start_date + timedelta(days=30)
+            if now < old_expiry:
+                start_date = old_start
+                expiry_date = old_expiry + timedelta(days=30)
+            else:
+                start_date = now
+                expiry_date = now + timedelta(days=30)
+        else:
+            start_date = now
+            expiry_date = now + timedelta(days=30)
 
-        # Save permanently in PostgreSQL
         save_membership(
             user_id,
             start_date,
@@ -269,7 +262,6 @@ else:
             f"📅 Expires: {expiry_text}"
         )
 
-    # REJECT
     elif action == "reject":
 
         await context.bot.send_message(
@@ -290,16 +282,13 @@ else:
         )
 
 
-# =========================
-# MY ACCOUNT
-# =========================
-
 async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    if not update.message or not update.effective_user:
+        return
 
+    user_id = update.effective_user.id
     membership_data = get_membership(user_id)
 
-    # No membership
     if not membership_data:
         await update.message.reply_text(
             "👤 MY ACCOUNT\n\n"
@@ -310,10 +299,8 @@ async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     start_date, expiry_date = membership_data
-
     now = datetime.now(timezone.utc)
 
-    # Expired
     if now >= expiry_date:
         await update.message.reply_text(
             "👤 MY ACCOUNT\n\n"
@@ -323,7 +310,6 @@ async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Active
     days_left = (expiry_date - now).days
     expiry_text = expiry_date.strftime("%d %B %Y")
 
@@ -336,11 +322,10 @@ async def myaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# RENEW
-# =========================
-
 async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
     await update.message.reply_text(
         "🔄 RENEW MEMBERSHIP\n\n"
         "💰 50 ETB / 30 Days\n\n"
@@ -348,24 +333,18 @@ async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# HELP
-# =========================
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
     await update.message.reply_text(
         "🆘 HELP\n\n"
         "For assistance, contact @DSNursing."
     )
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
 
-    # Create database table
     init_database()
 
     application = (
